@@ -1,59 +1,65 @@
-
-
 import uuid
-from django.conf import settings
 import jwt
-from core.models import Branch, Clinic, ClinicDirectorProfile, CustomUser, Plan, Subscription
+from datetime import datetime, timedelta, timezone  # ← timezone.utc — это экземпляр!
+
 from django.conf import settings
-from datetime import datetime, timedelta, timezone
+from django.utils import timezone as dj_timezone  # ← Для dj_timezone.now()
+
+from core.models import (
+    Branch, Clinic, ClinicDirectorProfile, CustomUser, Plan, Subscription
+)
 
 
+# === КОНСТАНТЫ ===
+ALGORITHM = "HS256"
 
 
-
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
 def decode_token(token: str):
+    """Декодирует JWT токен, возвращает payload или None"""
     try:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except:
         return None
 
 
-
-
-
 def get_user_from_token(request):
+    """Извлекает пользователя из access токена (с select_related)"""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ")[1]
 
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
             return None
-        user = CustomUser.objects.select_related('clinic', 'branch').get(
+        return CustomUser.objects.select_related('clinic', 'branch').get(
             id=payload["user_id"], is_active=True
         )
-        return user
     except:
         return None
+
+
 def authenticate_user(request):
+    """Альтернативная аутентификация (filter.first())"""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ")[1]
-    
+
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
             return None
-        user = CustomUser.objects.filter(id=payload["user_id"], is_active=True).first()
-        return user
+        return CustomUser.objects.filter(id=payload["user_id"], is_active=True).first()
     except:
         return None
 
+
 def authenticate(request):
+    """Упрощённая аутентификация через decode_token"""
     header = request.headers.get("Authorization", "")
     if not header.startswith("Bearer "):
         return None
@@ -68,41 +74,40 @@ def authenticate(request):
 
 
 def parse_iso_datetime(date_str: str) -> datetime:
-    """Принимает 2025-11-11T14:30:00Z или 2025-11-11T14:30:00+05:00 → возвращает aware datetime"""
+    """Парсит ISO дату → возвращает aware datetime в UTC"""
     if not date_str:
         return None
     try:
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except:
+            dt = dt.replace(tzinfo=timezone.utc)  # ← ЭКЗЕМПЛЯР!
+        return dt.astimezone(timezone.utc)
+    except Exception:
         return None
-
-ALGORITHM = "HS256"
-
 
 
 def generate_tokens(user_id: uuid.UUID):
-    now = datetime.now(timezone.utc)
+    """Генерирует access и refresh токены"""
+    now = datetime.now(timezone.utc)  # ← ЭКЗЕМПЛЯР timezone.utc
 
     access = jwt.encode({
         "user_id": str(user_id),
         "type": "access",
         "exp": now + timedelta(hours=24),
         "iat": now
-    }, settings.SECRET_KEY, algorithm="HS256")
+    }, settings.SECRET_KEY, algorithm=ALGORITHM)
 
     refresh = jwt.encode({
         "user_id": str(user_id),
         "type": "refresh",
         "exp": now + timedelta(days=30),
         "iat": now
-    }, settings.SECRET_KEY, algorithm="HS256")
+    }, settings.SECRET_KEY, algorithm=ALGORITHM)
 
     return access, refresh
 
 
+# === ОСНОВНЫЕ ЭНДПОИНТЫ ===
 
 def login(request, params):
     email = params.get("email")
@@ -121,7 +126,7 @@ def login(request, params):
         access, refresh = generate_tokens(user.id)
 
         profile_data = {}
-        if user.profile:
+        if hasattr(user, 'profile') and user.profile:
             if user.role == "doctor":
                 profile_data = {
                     "specialization": user.profile.specialization,
@@ -175,6 +180,7 @@ def refresh_token(request, params):
     except CustomUser.DoesNotExist:
         return {"response": {"error": "Пользователь не найден"}, "status": 404}
 
+
 def register(request, params):
     email = params.get("email")
     phone = params.get("phone")
@@ -209,74 +215,9 @@ def register(request, params):
         },
         "status": 200
     }
-    
-    
-    
-    
-    
- # v1/services/auth.py — ФИНАЛЬНАЯ ВЕРСИЯ (МНОГО КЛИНИК + ЛИМИТЫ)
-
-import jwt
-from django.conf import settings
-from django.utils import timezone
-from datetime import timedelta
-from core.models import (
-    CustomUser, Clinic, Branch, Plan, Subscription,
-    ClinicDirectorProfile
-)
-from v1.services.auth import generate_tokens  # ← УБЕДИСЬ, ЧТО ЭТО ЕСТЬ
 
 
-# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: ПОЛУЧАЕМ ПОЛЬЗОВАТЕЛЯ ПО ТОКЕНУ ===
-def get_user_from_token(request):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header.split(" ")[1]
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        if payload.get("type") != "access":
-            return None
-        return CustomUser.objects.select_related('clinic', 'branch').get(
-            id=payload["user_id"], is_active=True
-        )
-    except:
-        return None
-
-
-# v1/services/auth.py — ФИНАЛЬНАЯ ВЕРСИЯ (МНОГО КЛИНИК + ЛИМИТЫ)
-
-import jwt
-from django.conf import settings
-from django.utils import timezone
-from datetime import timedelta
-from core.models import (
-    CustomUser, Clinic, Branch, Plan, Subscription,
-    ClinicDirectorProfile
-)
-from v1.services.auth import generate_tokens  # ← УБЕДИСЬ, ЧТО ЭТО ЕСТЬ
-
-
-# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: ПОЛУЧАЕМ ПОЛЬЗОВАТЕЛЯ ПО ТОКЕНУ ===
-def get_user_from_token(request):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header.split(" ")[1]
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        if payload.get("type") != "access":
-            return None
-        return CustomUser.objects.select_related('clinic', 'branch').get(
-            id=payload["user_id"], is_active=True
-        )
-    except:
-        return None
-
-
-# === 1. ВЫБОР ПЛАНА И АКТИВАЦИЯ (ТОЛЬКО PENDING_DIRECTOR) ===
 def choose_plan_and_activate(request, params):
-    # ← ПРОВЕРКА ТОКЕНА ВРУЧНУЮ
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return {"response": {"error": "Токен обязателен"}, "status": 401}
@@ -284,7 +225,7 @@ def choose_plan_and_activate(request, params):
     token = auth_header.split(" ")[1]
 
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
             return {"response": {"error": "Требуется access токен"}, "status": 401}
 
@@ -294,7 +235,6 @@ def choose_plan_and_activate(request, params):
     except:
         return {"response": {"error": "Неверный токен"}, "status": 401}
 
-    # ← ТОЛЬКО PENDING_DIRECTOR МОЖЕТ АКТИВИРОВАТЬ ПЕРВУЮ КЛИНИКУ
     if user.role != CustomUser.Roles.PENDING_DIRECTOR:
         return {"response": {"error": "Вы уже активировали клинику или не можете это сделать"}, "status": 400}
 
@@ -310,7 +250,6 @@ def choose_plan_and_activate(request, params):
     except Plan.DoesNotExist:
         return {"response": {"error": "Тариф не найден"}, "status": 404}
 
-    # === ПРОВЕРКА ЛИМИТА КЛИНИК (ДЛЯ PENDING — ЭТО ПЕРВАЯ) ===
     current_clinics = Clinic.objects.filter(director_profile_link__user=user).count()
     if current_clinics >= plan.limit_clinics:
         return {
@@ -320,7 +259,6 @@ def choose_plan_and_activate(request, params):
             "status": 400
         }
 
-    # === СОЗДАЁМ КЛИНИКУ ===
     clinic = Clinic.objects.create(
         name=clinic_name,
         legal_name=params.get("legal_name", clinic_name),
@@ -328,24 +266,21 @@ def choose_plan_and_activate(request, params):
         status="active"
     )
 
-    # === СОЗДАЁМ ПОДПИСКУ ===
     Subscription.objects.create(
         clinic=clinic,
         plan=plan,
         status="trial",
-        period_start=timezone.now().date(),
-        period_end=timezone.now().date() + timedelta(days=30),
+        period_start=dj_timezone.now().date(),
+        period_end=dj_timezone.now().date() + timedelta(days=30),
         auto_renew=True
     )
 
-    # === ДЕЛАЕМ ПОЛЬЗОВАТЕЛЯ ДИРЕКТОРОМ ===
     user.role = CustomUser.Roles.CLINIC_DIRECTOR
-    user.clinic = clinic  # ← основная клиника (для удобства)
+    user.clinic = clinic
     user.save()
 
     ClinicDirectorProfile.objects.get_or_create(user=user, clinic=clinic)
 
-    # === ГЛАВНЫЙ ФИЛИАЛ ===
     branch = Branch.objects.create(
         clinic=clinic,
         name="Главный филиал",
@@ -357,7 +292,6 @@ def choose_plan_and_activate(request, params):
     user.branch = branch
     user.save()
 
-    # === НОВЫЕ ТОКЕНЫ ===
     access, refresh = generate_tokens(user.id)
 
     return {
@@ -367,7 +301,7 @@ def choose_plan_and_activate(request, params):
             "clinic_id": str(clinic.id),
             "branch_id": str(branch.id),
             "plan": plan.name,
-            "clinics_used": 1,
+            "clinics_used": current_clinics + 1,
             "clinics_limit": plan.limit_clinics,
             "trial_days_left": 30,
             "access_token": access,
@@ -377,21 +311,13 @@ def choose_plan_and_activate(request, params):
     }
 
 
-# === 2. ВЕБХУК ОПЛАТЫ (Payme / Click) ===
 def payment_webhook(request, params):
     """
-    Пример от Payme:
-    {
-        "method": "Payme",
-        "params": {
-            "account": {"subscription_id": "uuid"},
-            "transaction": "123456789",
-            "state": 2
-        }
-    }
+    Вебхук оплаты (Payme / Click)
     """
     transaction_id = params.get("transaction")
-    subscription_id = params.get("account", {}).get("subscription_id")
+    account = params.get("account", {})
+    subscription_id = account.get("subscription_id")
     state = params.get("state")
 
     if not transaction_id or not subscription_id:
@@ -405,16 +331,11 @@ def payment_webhook(request, params):
     except Subscription.DoesNotExist:
         return {"response": {"error": "Подписка не найдена"}, "status": 404}
 
-    # ← АКТИВИРУЕМ ПОДПИСКУ
     if subscription.status in ["trial", "pending_payment"]:
         subscription.status = "active"
-        subscription.period_end = timezone.now().date() + timedelta(days=30)
+        subscription.period_end = dj_timezone.now().date() + timedelta(days=30)
         subscription.auto_renew = True
         subscription.save()
-
-        # ← Можно отправить уведомление директору
-        # send_notification(subscription.clinic.director_profile_link.user, "Оплата прошла!")
-
         return {"response": {"success": True, "message": "Оплата подтверждена"}, "status": 200}
 
     return {"response": {"success": False, "message": "Подписка уже активна"}, "status": 200}
