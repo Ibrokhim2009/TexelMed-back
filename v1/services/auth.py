@@ -241,14 +241,14 @@ def choose_plan_and_activate(request, params):
     plan_slug = params.get("plan_slug")
     clinic_name = params.get("clinic_name")
     address = params.get("address", "")
-
     if not plan_slug or not clinic_name:
         return {"response": {"error": "plan_slug и clinic_name обязательны"}, "status": 400}
 
     try:
         plan = Plan.objects.get(slug=plan_slug, is_active=True)
     except Plan.DoesNotExist:
-        return {"response": {"error": "Тариф не найден"}, "status": 404}
+        return {"response": {"error": f"Тариф не найден", }, "status": 404}
+    
 
     current_clinics = Clinic.objects.filter(director_profile_link__user=user).count()
     if current_clinics >= plan.limit_clinics:
@@ -303,7 +303,6 @@ def choose_plan_and_activate(request, params):
             "plan": plan.name,
             "clinics_used": current_clinics + 1,
             "clinics_limit": plan.limit_clinics,
-            "trial_days_left": 30,
             "access_token": access,
             "refresh_token": refresh
         },

@@ -27,13 +27,11 @@ def get_user_from_token(request):
         return None
 
 
-# === 1. СТАТУС ПОЛЬЗОВАТЕЛЯ ===
 def get_my_status(request, params):
     user = get_user_from_token(request)
     if not user:
         return {"response": {"error": "Токен обязателен"}, "status": 401}
 
-    # Получаем ВСЕ клиники, где пользователь — директор
     director_clinics = Clinic.objects.filter(director_profile_link__user=user).select_related('subscription__plan')
 
     response = {
@@ -58,7 +56,6 @@ def get_my_status(request, params):
     return {"response": response, "status": 200}
 
 
-# === 2. СОЗДАТЬ КЛИНИКУ (ДИРЕКТОР МОЖЕТ СОЗДАВАТЬ ДО ЛИМИТА) ===
 def create_clinic(request, params):
     user = get_user_from_token(request)
     if not user:
@@ -78,7 +75,6 @@ def create_clinic(request, params):
     except Plan.DoesNotExist:
         return {"response": {"error": "Тариф не найден"}, "status": 404}
 
-    # === ПРОВЕРКА ЛИМИТА КЛИНИК ===
     current_clinics = Clinic.objects.filter(director_profile_link__user=user).count()
     if current_clinics >= plan.limit_clinics:
         return {
@@ -88,7 +84,6 @@ def create_clinic(request, params):
             "status": 400
         }
 
-    # === СОЗДАЁМ КЛИНИКУ ===
     clinic = Clinic.objects.create(
         name=clinic_name,
         legal_name=params.get("legal_name", clinic_name),
@@ -96,7 +91,6 @@ def create_clinic(request, params):
         status="active"
     )
 
-    # === ПОДПИСКА ===
     Subscription.objects.create(
         clinic=clinic,
         plan=plan,
@@ -106,12 +100,10 @@ def create_clinic(request, params):
         auto_renew=True
     )
 
-    # === ДЕЛАЕМ ПОЛЬЗОВАТЕЛЯ ДИРЕКТОРОМ ЭТОЙ КЛИНИКИ ===
     ClinicDirectorProfile.objects.update_or_create(
         user=user, clinic=clinic
     )
 
-    # === ГЛАВНЫЙ ФИЛИАЛ ===
     branch = Branch.objects.create(
         clinic=clinic,
         name="Главный филиал",
@@ -121,7 +113,6 @@ def create_clinic(request, params):
         is_active=True
     )
 
-    # === ЕСЛИ ЭТО ПЕРВАЯ КЛИНИКА — УСТАНАВЛИВАЕМ ОСНОВНУЮ ===
     if user.role == CustomUser.Roles.PENDING_DIRECTOR:
         user.role = CustomUser.Roles.CLINIC_DIRECTOR
         user.clinic = clinic
@@ -145,7 +136,6 @@ def create_clinic(request, params):
     }
 
 
-# === 3. СПИСОК КЛИНИК (ДИРЕКТОР — ВСЕ СВОИ, АДМИН — ВСЕ) ===
 def clinic_list(request, params):
     user = get_user_from_token(request)
     if not user:
@@ -177,7 +167,6 @@ def clinic_list(request, params):
     return {"response": data, "status": 200}
 
 
-# === 4. ДЕТАЛИ КЛИНИКИ (ТОЛЬКО СВОЯ ИЛИ АДМИН) ===
 def clinic_detail(request, params):
     clinic_id = params.get("clinic_id")
     if not clinic_id:
@@ -192,7 +181,6 @@ def clinic_detail(request, params):
     except Clinic.DoesNotExist:
         return {"response": {"error": "Клиника не найдена"}, "status": 404}
 
-    # Доступ: админ или владелец
     is_owner = ClinicDirectorProfile.objects.filter(user=user, clinic=clinic).exists()
     if user.role != CustomUser.Roles.SYSTEM_ADMIN and not is_owner:
         return {"response": {"error": "Доступ запрещён"}, "status": 403}
@@ -226,7 +214,6 @@ def clinic_detail(request, params):
     }
 
 
-# === 5. ОБНОВИТЬ КЛИНИКУ ===
 def clinic_update(request, params):
     clinic_id = params.get("clinic_id")
     if not clinic_id:
@@ -254,7 +241,6 @@ def clinic_update(request, params):
     return {"response": {"success": True, "message": "Клиника обновлена"}, "status": 200}
 
 
-# === 6. УДАЛИТЬ КЛИНИКУ ===
 def clinic_delete(request, params):
     user = get_user_from_token(request)
     if not user or user.role != CustomUser.Roles.SYSTEM_ADMIN:

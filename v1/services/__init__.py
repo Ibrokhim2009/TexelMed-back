@@ -1,6 +1,6 @@
 from .auth import register, login, choose_plan_and_activate, refresh_token
 from .director import get_my_status, create_clinic, clinic_list, clinic_detail, clinic_update, clinic_delete
-from .sysadmin import sys_create_director
+from .sysadmin import sys_create_director, list_plans, get_plan, delete_plan, create_plan, update_plan
 from methodism import custom_response
 methods = dir()
 

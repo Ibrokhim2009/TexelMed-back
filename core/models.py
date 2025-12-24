@@ -196,7 +196,6 @@ class Plan(models.Model):
     limit_branches = models.PositiveIntegerField(default=1, help_text="Макс. филиалов")
     limit_clinics = models.PositiveIntegerField(default=1, help_text="Макс. клиник для директора")
     limit_patients = models.PositiveIntegerField(default=5000, help_text="Макс. пациентов")
-    limit_storage_gb = models.PositiveIntegerField(default=10, help_text="Макс. хранилище (ГБ)")
 
     is_active = models.BooleanField(default=True)
 
