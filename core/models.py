@@ -18,6 +18,7 @@ class CustomUserManager(BaseUserManager):
         user.set_password(password)
         user.save(using=self._db)
         return user
+    
 
     def create_superuser(self, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
@@ -83,7 +84,13 @@ class ClinicDirectorProfile(models.Model):
 
 class ClinicAdminProfile(models.Model):
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='admin_profile')
-    branch = models.ForeignKey('Branch', on_delete=models.CASCADE, related_name='admin_profiles')
+    branch = models.ForeignKey(
+        'Branch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='admin_profiles'
+    )
 
     can_edit_schedule = models.BooleanField(default=True)
     can_manage_patients = models.BooleanField(default=True)
@@ -91,7 +98,7 @@ class ClinicAdminProfile(models.Model):
     can_send_notifications = models.BooleanField(default=True)
 
     def __str__(self):
-        return f"Админ филиала: {self.user.full_name}"
+        return f"Админ филиала: {self.user.full_name} ({self.branch.name if self.branch else 'не назначен'})"
 
 
 class DoctorProfile(models.Model):
@@ -169,7 +176,7 @@ class Clinic(models.Model):
         return {"ok": True}
 
 
-# === 4. ФИЛИАЛ ===
+# В модели Branch добавь это поле
 class Branch(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='branches')
@@ -177,6 +184,7 @@ class Branch(models.Model):
     address = models.CharField(max_length=500)
     phone = PhoneNumberField()
     email = models.EmailField(blank=True)
+    working_hours = models.CharField(max_length=100, blank=True, default="", help_text="Пн-Пт 09:00 - 18:00")
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
