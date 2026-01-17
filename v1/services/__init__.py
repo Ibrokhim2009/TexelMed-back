@@ -1,5 +1,5 @@
-from .auth import register, login, choose_plan_and_activate, refresh_token
-from .director import get_my_status, create_clinic, clinic_list, clinic_detail, clinic_update, clinic_delete
+from .auth import register, login, choose_plan_and_activate, refresh_token, forgot_password, reset_password
+from .director import get_my_status, create_clinic, clinic_list, clinic_detail, clinic_update, clinic_delete, patient_list, patient_create, patient_update, patient_delete, patient_detail, patient_documents, patient_finance, branch_list, branch_create, branch_update, branch_delete, branch_detail, user_list, user_create, user_update, user_delete, user_detail, doctor_list, doctor_create, doctor_detail, doctor_update, doctor_update_schedule, doctor_transfer
 from .sysadmin import (
     sys_create_director,
     list_plans,

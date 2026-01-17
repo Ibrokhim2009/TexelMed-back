@@ -61,17 +61,48 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     @property
     def profile(self):
         mapping = {
-            self.Roles.CLINIC_DIRECTOR: 'director_profile',
+            self.Roles.CLINIC_DIRECTOR: 'director_profiles',
             self.Roles.CLINIC_ADMIN: 'admin_profile',
             self.Roles.DOCTOR: 'doctor_profile',
             self.Roles.RECEPTIONIST: 'receptionist_profile',
         }
-        return getattr(self, mapping.get(self.role), None) if self.role in mapping else None
+        rel_name = mapping.get(self.role)
+        if not rel_name:
+            return None
+            
+        profile = getattr(self, rel_name, None)
+        
+        # Если это директор, то 'director_profiles' вернет RelatedManager
+        if self.role == self.Roles.CLINIC_DIRECTOR and profile:
+            return profile.first()
+            
+        return profile
 
 
+# === 13. СБРОС ПАРОЛЯ (OTP) ===
+class PasswordResetOTP(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='password_reset_otps')
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used = models.BooleanField(default=False)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'created_at']),
+            models.Index(fields=['code']),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"OTP {self.code} для {self.user.email} ({'использован' if self.used else 'активен'})"
+
+    def is_valid(self):
+        """Проверяет, действителен ли код (не использован и не истёк)"""
+        return not self.used and timezone.now() <= self.expires_at
 # === 2. ПРОФИЛИ ===
 class ClinicDirectorProfile(models.Model):
-    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='director_profile')
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='director_profiles')
     clinic = models.OneToOneField('Clinic', on_delete=models.CASCADE, related_name='director_profile_link')
 
     notify_new_patient = models.BooleanField(default=True)
@@ -109,6 +140,8 @@ class DoctorProfile(models.Model):
     cabinet = models.CharField(max_length=50, blank=True)
     experience_years = models.PositiveSmallIntegerField(null=True, blank=True)
     education = models.TextField(blank=True)
+    work_history = models.TextField(blank=True)
+    biography = models.TextField(blank=True)
     certificates = models.JSONField(default=list, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.0)
     color = models.CharField(max_length=7, default="#3B82F6")
@@ -258,6 +291,13 @@ class Patient(models.Model):
     allergies = models.TextField(blank=True)
     chronic_diseases = models.TextField(blank=True)
     notes = models.TextField(blank=True)
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Активен'
+        INACTIVE = 'inactive', 'Неактивен'
+        ARCHIVED = 'archived', 'Архив'
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
 
     total_visits = models.PositiveIntegerField(default=0)
     total_spent = models.DecimalField(max_digits=12, decimal_places=2, default=0)

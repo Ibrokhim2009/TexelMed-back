@@ -1,31 +1,8 @@
-# core/methodism_onboarding.py — МНОГО КЛИНИК + ЛИМИТЫ
-
-import jwt
-from django.conf import settings
-from django.utils import timezone
 from datetime import timedelta
-from core.models import (
-    CustomUser, Clinic, Branch, Plan, Subscription,
-    ClinicDirectorProfile
-)
+from django.utils import timezone
+from core.models import CustomUser, Clinic, Branch, Plan, Subscription, ClinicDirectorProfile
 from v1.services.auth import generate_tokens
-
-
-def get_user_from_token(request):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header.split(" ")[1]
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        if payload.get("type") != "access":
-            return None
-        return CustomUser.objects.select_related('clinic', 'branch').get(
-            id=payload["user_id"], is_active=True
-        )
-    except:
-        return None
-
+from .utils import get_user_from_token
 
 def get_my_status(request, params):
     user = get_user_from_token(request)
@@ -147,10 +124,19 @@ def clinic_list(request, params):
         clinics = Clinic.objects.filter(director_profile_link__user=user)
 
     data = []
-    for c in clinics.select_related('subscription__plan'):
-        sub = c.subscription
-        plan = sub.plan if sub else None
-        limits = c.check_limits()
+    for c in clinics:
+        # Безопасное получение подписки
+        try:
+            sub = c.subscription
+            plan = sub.plan
+        except (Subscription.DoesNotExist, AttributeError, Clinic.subscription.RelatedObjectDoesNotExist):
+            sub = None
+            plan = None
+            
+        limit_users = plan.limit_users if plan else '∞'
+        limit_branches = plan.limit_branches if plan else '∞'
+        limit_patients = plan.limit_patients if plan else '∞'
+        limit_clinics = plan.limit_clinics if plan else 1
 
         data.append({
             "id": str(c.id),
@@ -158,10 +144,10 @@ def clinic_list(request, params):
             "status": c.status,
             "plan": plan.name if plan else "Нет",
             "clinics_used": Clinic.objects.filter(director_profile_link__user=user).count(),
-            "clinics_limit": plan.limit_clinics if plan else 1,
-            "users": f"{c.users.filter(is_active=True).count()}/{plan.limit_users if plan else '∞'}",
-            "branches": f"{c.branches.filter(is_active=True).count()}/{plan.limit_branches if plan else '∞'}",
-            "patients": f"{c.patients.count()}/{plan.limit_patients if plan else '∞'}",
+            "clinics_limit": limit_clinics,
+            "users": f"{c.users.filter(is_active=True).count()}/{limit_users}",
+            "branches": f"{c.branches.filter(is_active=True).count()}/{limit_branches}",
+            "patients": f"{c.patients.count()}/{limit_patients}",
         })
 
     return {"response": data, "status": 200}
@@ -181,13 +167,18 @@ def clinic_detail(request, params):
     except Clinic.DoesNotExist:
         return {"response": {"error": "Клиника не найдена"}, "status": 404}
 
-    is_owner = ClinicDirectorProfile.objects.filter(user=user, clinic=clinic).exists()
-    if user.role != CustomUser.Roles.SYSTEM_ADMIN and not is_owner:
-        return {"response": {"error": "Доступ запрещён"}, "status": 403}
+    # СТРОГАЯ проверка: если не админ, обязан быть директором ЭТОЙ клиники
+    if user.role != CustomUser.Roles.SYSTEM_ADMIN:
+        is_owner = ClinicDirectorProfile.objects.filter(user_id=user.id, clinic_id=clinic.id).exists()
+        if not is_owner:
+            return {"response": {"error": "Доступ запрещён. Вы не являетесь директором этой клиники."}, "status": 403}
 
-    sub = clinic.subscription
+    sub = getattr(clinic, 'subscription', None)
     plan = sub.plan if sub else None
-    director = clinic.director_profile_link.user
+    
+    # Получаем директора через связь профиля
+    profile = getattr(clinic, 'director_profile_link', None)
+    director = profile.user if profile else None
 
     return {
         "response": {
@@ -228,9 +219,11 @@ def clinic_update(request, params):
     except Clinic.DoesNotExist:
         return {"response": {"error": "Клиника не найдена"}, "status": 404}
 
-    is_owner = ClinicDirectorProfile.objects.filter(user=user, clinic=clinic).exists()
-    if user.role != CustomUser.Roles.SYSTEM_ADMIN and not is_owner:
-        return {"response": {"error": "Нет прав"}, "status": 403}
+    # СТРОГАЯ проверка
+    if user.role != CustomUser.Roles.SYSTEM_ADMIN:
+        is_owner = ClinicDirectorProfile.objects.filter(user_id=user.id, clinic_id=clinic.id).exists()
+        if not is_owner:
+            return {"response": {"error": "Нет прав на редактирование этой клиники"}, "status": 403}
 
     clinic.name = params.get("name", clinic.name)
     clinic.legal_name = params.get("legal_name", clinic.legal_name)

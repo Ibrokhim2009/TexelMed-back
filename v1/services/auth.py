@@ -6,8 +6,9 @@ from django.conf import settings
 from django.utils import timezone as dj_timezone  # ← Для dj_timezone.now()
 
 from core.models import (
-    Branch, Clinic, ClinicDirectorProfile, CustomUser, Plan, Subscription
+    Branch, Clinic, ClinicDirectorProfile, CustomUser, PasswordResetOTP, Plan, Subscription
 )
+from helper.auth import generate_otp, send_password_reset_email
 
 
 # === КОНСТАНТЫ ===
@@ -338,3 +339,94 @@ def payment_webhook(request, params):
         return {"response": {"success": True, "message": "Оплата подтверждена"}, "status": 200}
 
     return {"response": {"success": False, "message": "Подписка уже активна"}, "status": 200}
+
+
+def forgot_password(request, params):
+    """Шаг 1: Запрос сброса пароля → отправка OTP на email"""
+    email = params.get("email")
+    if not email:
+        return {"response": {"error": "email обязателен"}, "status": 400}
+
+    try:
+        user = CustomUser.objects.get(email=email, is_active=True)
+    except CustomUser.DoesNotExist:
+        # Не говорим, существует ли пользователь (безопасность)
+        return {"response": {"success": True, "message": "Если email зарегистрирован, на него отправлен код восстановления"}, "status": 200}
+
+    # Удаляем старые неиспользованные OTP этого пользователя
+    PasswordResetOTP.objects.filter(user=user, used=False).delete()
+
+    # Генерируем новый код
+    code = generate_otp()
+    expires_at = dj_timezone.now() + timedelta(minutes=10)
+
+    PasswordResetOTP.objects.create(
+        user=user,
+        code=code,
+        expires_at=expires_at
+    )
+
+    # Отправляем email
+    try:
+        send_password_reset_email(user, code)
+    except Exception as e:
+        # В продакшене лучше логировать
+        print(f"Ошибка отправки email: {e}")
+        return {"response": {"error": "Ошибка отправки кода. Попробуйте позже."}, "status": 500}
+
+    return {
+        "response": {
+            "success": True,
+            "message": "Код восстановления отправлен на ваш email"
+        },
+        "status": 200
+    }
+
+
+def reset_password(request, params):
+    """Шаг 2: Подтверждение OTP и смена пароля"""
+    email = params.get("email")
+    code = params.get("code")
+    new_password = params.get("new_password")
+
+    if not all([email, code, new_password]):
+        return {"response": {"error": "email, code и new_password обязательны"}, "status": 400}
+
+    if len(new_password) < 8:
+        return {"response": {"error": "Пароль должен быть не менее 8 символов"}, "status": 400}
+
+    try:
+        user = CustomUser.objects.get(email=email, is_active=True)
+    except CustomUser.DoesNotExist:
+        return {"response": {"error": "Неверные данные"}, "status": 400}
+
+    try:
+        otp_obj = PasswordResetOTP.objects.filter(
+            user=user,
+            code=code,
+            used=False,
+            expires_at__gte=dj_timezone.now()
+        ).latest('created_at')
+    except PasswordResetOTP.DoesNotExist:
+        return {"response": {"error": "Неверный или просроченный код"}, "status": 400}
+
+    # Меняем пароль
+    user.set_password(new_password)
+    user.save()
+
+    # Помечаем код как использованный
+    otp_obj.used = True
+    otp_obj.save()
+
+    # Генерируем новые токены (чтобы старые access/refresh стали невалидными)
+    access, refresh = generate_tokens(user.id)
+
+    return {
+        "response": {
+            "success": True,
+            "message": "Пароль успешно изменён",
+            "access_token": access,
+            "refresh_token": refresh
+        },
+        "status": 200
+    }
