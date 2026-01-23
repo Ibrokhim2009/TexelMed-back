@@ -169,11 +169,11 @@ def list_plans(request, params):
     if user.role not in [CustomUser.Roles.SYSTEM_ADMIN, CustomUser.Roles.CLINIC_DIRECTOR, CustomUser.Roles.PENDING_DIRECTOR]:
         return {"response": {"error": "Доступ запрещён"}, "status": 403}
 
-    plans = Plan.objects.filter(is_active=True).order_by('price_monthly')
+    plans = Plan.objects.filter().order_by('price_monthly')
 
     data = []
     for p in plans:
-        active_count = Subscription.objects.filter(plan=p, status__in=['active', 'trial']).count()
+        active_count = Subscription.objects.filter(plan=p).count()
         data.append({
             "id": str(p.id),
             "name": p.name,
@@ -184,6 +184,7 @@ def list_plans(request, params):
             "limit_branches": p.limit_branches,
             "limit_clinics": p.limit_clinics,
             "limit_patients": p.limit_patients,
+            "is_active": p.is_active,
             "active_subscriptions": active_count,
         })
 
@@ -215,7 +216,7 @@ def get_plan(request, params):
 
     # Статистика
     total_subscriptions = subscriptions.count()
-    active_subscriptions = subscriptions.filter(status__in=['active', 'trial']).count()
+    active_subscriptions = subscriptions.filter().count()
 
     # Список клиник с подробностями
     clinics_data = []

@@ -35,6 +35,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         CLINIC_ADMIN     = 'clinic_admin',     _('Администратор филиала')
         DOCTOR           = 'doctor',           _('Врач')
         RECEPTIONIST     = 'receptionist',     _('Регистратор')
+        PATIENT          = 'patient',          _('Пациент')
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True, db_index=True)
@@ -65,6 +66,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
             self.Roles.CLINIC_ADMIN: 'admin_profile',
             self.Roles.DOCTOR: 'doctor_profile',
             self.Roles.RECEPTIONIST: 'receptionist_profile',
+            self.Roles.PATIENT: 'patient_profiles',
         }
         rel_name = mapping.get(self.role)
         if not rel_name:
@@ -73,7 +75,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         profile = getattr(self, rel_name, None)
         
         # Если это директор, то 'director_profiles' вернет RelatedManager
-        if self.role == self.Roles.CLINIC_DIRECTOR and profile:
+        if self.role in [self.Roles.CLINIC_DIRECTOR, self.Roles.PATIENT] and profile:
             return profile.first()
             
         return profile
@@ -81,6 +83,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
 # === 13. СБРОС ПАРОЛЯ (OTP) ===
 class PasswordResetOTP(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='password_reset_otps')
     code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -98,10 +101,10 @@ class PasswordResetOTP(models.Model):
         return f"OTP {self.code} для {self.user.email} ({'использован' if self.used else 'активен'})"
 
     def is_valid(self):
-        """Проверяет, действителен ли код (не использован и не истёк)"""
         return not self.used and timezone.now() <= self.expires_at
 # === 2. ПРОФИЛИ ===
 class ClinicDirectorProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='director_profiles')
     clinic = models.OneToOneField('Clinic', on_delete=models.CASCADE, related_name='director_profile_link')
 
@@ -114,6 +117,7 @@ class ClinicDirectorProfile(models.Model):
 
 
 class ClinicAdminProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='admin_profile')
     branch = models.ForeignKey(
         'Branch',
@@ -133,6 +137,7 @@ class ClinicAdminProfile(models.Model):
 
 
 class DoctorProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='doctor_profile')
     branch = models.ForeignKey('Branch', on_delete=models.SET_NULL, null=True, related_name='doctor_profiles')
 
@@ -159,6 +164,7 @@ class DoctorProfile(models.Model):
 
 
 class ReceptionistProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='receptionist_profile')
     branch = models.ForeignKey('Branch', on_delete=models.CASCADE, related_name='receptionist_profiles')
 
@@ -209,7 +215,6 @@ class Clinic(models.Model):
         return {"ok": True}
 
 
-# В модели Branch добавь это поле
 class Branch(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='branches')
@@ -224,7 +229,6 @@ class Branch(models.Model):
         return f"{self.clinic.name} • {self.name}"
 
 
-# === 5. ТАРИФНЫЙ ПЛАН ===
 class Plan(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
@@ -232,7 +236,6 @@ class Plan(models.Model):
     price_monthly = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default="UZS")
 
-    # ЛИМИТЫ
     limit_users = models.PositiveIntegerField(default=10, help_text="Макс. пользователей")
     limit_branches = models.PositiveIntegerField(default=1, help_text="Макс. филиалов")
     limit_clinics = models.PositiveIntegerField(default=1, help_text="Макс. клиник для директора")
@@ -244,8 +247,8 @@ class Plan(models.Model):
         return f"{self.name} • {self.price_monthly} {self.currency}/мес"
 
 
-# === 6. ПОДПИСКА ===
 class Subscription(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clinic = models.OneToOneField(
         Clinic,
         on_delete=models.CASCADE,
@@ -273,9 +276,9 @@ class Subscription(models.Model):
         return f"{self.clinic} • {self.plan}" if self.clinic else "Без клиники"
 
 
-# === 7. ПАЦИЕНТ ===
 class Patient(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='patient_profiles')
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='patients')
     primary_branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
 
@@ -312,6 +315,7 @@ class Patient(models.Model):
 
 # === 8. УСЛУГИ ===
 class ServiceCategory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
     order = models.PositiveSmallIntegerField(default=0)
@@ -321,10 +325,12 @@ class ServiceCategory(models.Model):
 
 
 class Service(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='services')
-    category = models.ForeignKey(ServiceCategory, on_delete=models.SET_NULL, null=True)
+    category = models.ForeignKey(ServiceCategory, on_delete=models.SET_NULL, null=True, related_name='services')
     name = models.CharField(max_length=255)
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_percent = models.PositiveSmallIntegerField(default=0, help_text="Скидка на услугу в %")
     duration_minutes = models.PositiveSmallIntegerField(default=30)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -365,6 +371,7 @@ class Appointment(models.Model):
 
 # === 10. ОПЛАТА ===
 class Payment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='payments')
     patient = models.ForeignKey(Patient, on_delete=models.SET_NULL, null=True, blank=True)
     appointment = models.ForeignKey(Appointment, on_delete=models.SET_NULL, null=True, blank=True)
@@ -384,6 +391,7 @@ class Payment(models.Model):
 
 # === 11. МЕДИЦИНСКАЯ КАРТА ===
 class MedicalRecord(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='medical_records')
     doctor = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
     appointment = models.OneToOneField(Appointment, on_delete=models.SET_NULL, null=True, blank=True)
@@ -405,6 +413,7 @@ class MedicalRecord(models.Model):
 
 # === 12. ФАЙЛЫ ПАЦИЕНТА ===
 class PatientFile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     class FileType(models.TextChoices):
         ANALYSIS = 'analysis', 'Анализы'
         XRAY = 'xray', 'Рентген'
@@ -423,3 +432,55 @@ class PatientFile(models.Model):
 
     def __str__(self):
         return f"{self.get_file_type_display()} • {self.patient}"
+# === 13. МАРКЕТИНГ И ПАКЕТЫ ===
+
+class ServicePackage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='service_packages')
+    name = models.CharField(max_length=255)
+    services = models.ManyToManyField(Service, related_name='packages')
+    
+    total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    price = models.DecimalField(max_digits=12, decimal_places=2)
+    discount_percent = models.PositiveSmallIntegerField(default=0)
+    
+    valid_until = models.DateField(null=True, blank=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    sold_count = models.PositiveIntegerField(default=0)
+
+    def __str__(self):
+        return self.name
+
+
+class DiscountCategory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='discount_categories')
+    name = models.CharField(max_length=100)
+    percent = models.PositiveSmallIntegerField()
+    description = models.CharField(max_length=500, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.percent}%"
+
+
+class Promotion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='promotions')
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    
+    start_date = models.DateField()
+    end_date = models.DateField()
+    
+    discount_percent = models.PositiveSmallIntegerField()
+    service_categories = models.ManyToManyField(ServiceCategory, blank=True)
+    
+    is_active = models.BooleanField(default=True)
+    usage_count = models.PositiveIntegerField(default=0)
+
+    def __str__(self):
+        return self.name

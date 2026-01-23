@@ -1,5 +1,6 @@
 from datetime import timedelta
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Q
 from core.models import CustomUser, Clinic, ClinicDirectorProfile, Patient, MedicalRecord, PatientFile, Payment, Appointment, Branch
 from .utils import get_user_from_token
@@ -141,27 +142,57 @@ def patient_create(request, params):
     if not card_number or card_number.strip() == "":
         card_number = None
 
+    # Пароль для входа
+    password = params.get("password")
+    
+    # Если указан пароль, email обязателен
+    email = params.get("email", "").strip()
+    if password and not email:
+         return {"response": {"error": "Для создания входа (пароль) требуется Email"}, "status": 400}
+
+    if email and CustomUser.objects.filter(email=email).exists():
+        # Если создаем юзера - это ошибка. Если просто пациент - предупреждение или ошибка?
+        # Допустим, email должен быть уникальным для Users.
+        if password:
+             return {"response": {"error": "Email уже занят пользователем системы"}, "status": 400}
+
     # Создание
     try:
-        patient = Patient.objects.create(
-            clinic=clinic,
-            full_name=full_name,
-            phone=phone,
-            birth_date=birth_date,
-            gender=gender,
-            primary_branch_id=branch_id,
-            
-            # Опциональные поля
-            email=params.get("email", ""),
-            address=params.get("address", ""),
-            card_number=card_number,
-            blood_type=params.get("blood_type", ""),
-            allergies=params.get("allergies", ""),
-            chronic_diseases=params.get("chronic_diseases", ""),
-            notes=params.get("notes", ""),
-            status=params.get("status", "active")
-        )
-        return {"response": {"success": True, "id": str(patient.id), "message": "Пациент создан"}, "status": 201}
+        with transaction.atomic():
+            user_account = None
+            if password:
+                user_account = CustomUser.objects.create(
+                    email=email,
+                    phone=phone,
+                    full_name=full_name,
+                    role=CustomUser.Roles.PATIENT,
+                    is_active=params.get("status", "active") == "active",
+                    clinic=clinic,
+                    branch_id=branch_id
+                )
+                user_account.set_password(password)
+                user_account.save()
+
+            patient = Patient.objects.create(
+                user=user_account,
+                clinic=clinic,
+                full_name=full_name,
+                phone=phone,
+                birth_date=birth_date,
+                gender=gender,
+                primary_branch_id=branch_id,
+                
+                # Опциональные поля
+                email=email,
+                address=params.get("address", ""),
+                card_number=card_number,
+                blood_type=params.get("blood_type", ""),
+                allergies=params.get("allergies", ""),
+                chronic_diseases=params.get("chronic_diseases", ""),
+                notes=params.get("notes", ""),
+                status=params.get("status", "active")
+            )
+        return {"response": {"success": True, "id": str(patient.id), "user_id": str(user_account.id) if user_account else None, "message": "Пациент создан"}, "status": 201}
     except Exception as e:
         return {"response": {"error": str(e)}, "status": 400}
 

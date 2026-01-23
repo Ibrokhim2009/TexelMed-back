@@ -3,3 +3,4 @@ from .patients import *
 from .branches import *
 from .users import *
 from .doctors import *
+from .services import *
